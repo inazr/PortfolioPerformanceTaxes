@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<client>
+  <version>68</version>
+  <baseCurrency>EUR</baseCurrency>
+
+  <securities>
+    <security>
+      <uuid>sec-etf-world-001</uuid>
+      <name>Vanguard FTSE All-World UCITS ETF</name>
+      <isin>IE00BK5BQT80</isin>
+      <wkn>A2PKXG</wkn>
+      <prices>
+        <price t="2022-01-01" v="10000"/>
+        <price t="2022-12-31" v="9500"/>
+        <price t="2023-01-01" v="9500"/>
+        <price t="2023-06-30" v="10500"/>
+        <price t="2023-12-31" v="11200"/>
+        <price t="2024-01-01" v="11200"/>
+        <price t="2024-12-31" v="12500"/>
+        <price t="2025-01-01" v="12500"/>
+        <price t="2025-06-15" v="13000"/>
+        <price t="2025-12-31" v="13500"/>
+      </prices>
+    </security>
+
+    <security>
+      <uuid>sec-bond-etf-002</uuid>
+      <name>iShares Core Euro Government Bond UCITS ETF</name>
+      <isin>IE00B4WXJJ64</isin>
+      <wkn>A0RL83</wkn>
+      <prices>
+        <price t="2023-01-01" v="11000"/>
+        <price t="2023-12-31" v="11500"/>
+        <price t="2024-01-01" v="11500"/>
+        <price t="2024-12-31" v="11300"/>
+        <price t="2025-01-01" v="11300"/>
+        <price t="2025-12-31" v="11800"/>
+      </prices>
+    </security>
+
+    <security>
+      <uuid>sec-immo-003</uuid>
+      <name>iShares Developed Markets Property Yield UCITS ETF</name>
+      <isin>IE00B1FZS350</isin>
+      <wkn>A0LEW8</wkn>
+      <prices>
+        <price t="2023-01-01" v="2200"/>
+        <price t="2023-12-31" v="2400"/>
+        <price t="2024-01-01" v="2400"/>
+        <price t="2024-12-31" v="2600"/>
+        <price t="2025-01-01" v="2600"/>
+        <price t="2025-12-31" v="2800"/>
+      </prices>
+    </security>
+  </securities>
+
+  <accounts>
+    <account>
+      <uuid>acc-001</uuid>
+      <name>Verrechnungskonto</name>
+      <currencyCode>EUR</currencyCode>
+      <transactions>
+        <account-transaction>
+          <date>2023-06-15T00:00</date>
+          <type>DIVIDENDS</type>
+          <amount>5000</amount>
+          <shares>1000000000</shares>
+          <security>
+            <uuid>sec-etf-world-001</uuid>
+          </security>
+          <taxes>0</taxes>
+        </account-transaction>
+        <account-transaction>
+          <date>2024-06-15T00:00</date>
+          <type>DIVIDENDS</type>
+          <amount>6000</amount>
+          <shares>1200000000</shares>
+          <security>
+            <uuid>sec-etf-world-001</uuid>
+          </security>
+          <taxes>0</taxes>
+        </account-transaction>
+      </transactions>
+    </account>
+  </accounts>
+
+  <portfolios>
+    <portfolio>
+      <uuid>ptf-001</uuid>
+      <name>Depot</name>
+      <transactions>
+        <!-- Kauf Vanguard All-World: 100 Stücke à 95 EUR am 15.03.2022 -->
+        <portfolio-transaction>
+          <date>2022-03-15T00:00</date>
+          <type>BUY</type>
+          <amount>950000</amount>
+          <shares>10000000000</shares>
+          <fees>1500</fees>
+          <taxes>0</taxes>
+          <security>
+            <uuid>sec-etf-world-001</uuid>
+          </security>
+        </portfolio-transaction>
+
+        <!-- Kauf weitere 20 Stücke am 15.09.2023 à 105 EUR -->
+        <portfolio-transaction>
+          <date>2023-09-15T00:00</date>
+          <type>BUY</type>
+          <amount>210000</amount>
+          <shares>2000000000</shares>
+          <fees>500</fees>
+          <taxes>0</taxes>
+          <security>
+            <uuid>sec-etf-world-001</uuid>
+          </security>
+        </portfolio-transaction>
+
+        <!-- Kauf Bond ETF: 50 Stücke à 110 EUR am 01.02.2023 -->
+        <portfolio-transaction>
+          <date>2023-02-01T00:00</date>
+          <type>BUY</type>
+          <amount>550000</amount>
+          <shares>5000000000</shares>
+          <fees>1000</fees>
+          <taxes>0</taxes>
+          <security>
+            <uuid>sec-bond-etf-002</uuid>
+          </security>
+        </portfolio-transaction>
+
+        <!-- Kauf Immo ETF: 200 Stücke à 22 EUR am 15.01.2023 -->
+        <portfolio-transaction>
+          <date>2023-01-15T00:00</date>
+          <type>BUY</type>
+          <amount>440000</amount>
+          <shares>20000000000</shares>
+          <fees>500</fees>
+          <taxes>0</taxes>
+          <security>
+            <uuid>sec-immo-003</uuid>
+          </security>
+        </portfolio-transaction>
+
+        <!-- Verkauf 30 Stücke All-World am 15.11.2024 à 125 EUR -->
+        <portfolio-transaction>
+          <date>2024-11-15T00:00</date>
+          <type>SELL</type>
+          <amount>375000</amount>
+          <shares>3000000000</shares>
+          <fees>500</fees>
+          <taxes>0</taxes>
+          <security>
+            <uuid>sec-etf-world-001</uuid>
+          </security>
+        </portfolio-transaction>
+      </transactions>
+    </portfolio>
+  </portfolios>
+</client>

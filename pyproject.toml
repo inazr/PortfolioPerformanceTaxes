@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "portfolioperformancetaxes"
+version = "0.1.0"
+description = "Steuerrechner für Portfolio Performance – berechnet deutsche Kapitalertragsteuern aus PP-XML-Daten"
+requires-python = ">=3.13"
+dependencies = [
+    "lxml>=5.0",
+    "PyQt6>=6.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[project.scripts]
+pptax = "pptax.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pptax"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
