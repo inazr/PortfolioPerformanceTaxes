@@ -92,3 +92,16 @@ class TestFifoBestand:
 
         positionen = fifo.verkauf(date(2023, 6, 1), Decimal("100"), Decimal("50.00"))
         assert positionen[0].gewinn_brutto == Decimal("-1000.00")
+
+    def test_add_vorabpauschale_to_lot(self):
+        """Vorabpauschale gezielt auf einzelnes Lot addieren."""
+        fifo = FifoBestand("sec-001")
+        fifo.kauf(date(2022, 1, 1), Decimal("100"), Decimal("50.00"))
+        fifo.kauf(date(2023, 1, 1), Decimal("50"), Decimal("60.00"))
+
+        fifo.add_vorabpauschale_to_lot(0, Decimal("30.00"))
+        fifo.add_vorabpauschale_to_lot(1, Decimal("10.00"))
+
+        lots = fifo.bestand()
+        assert lots[0].vorabpauschalen_kumuliert == Decimal("30.00")
+        assert lots[1].vorabpauschalen_kumuliert == Decimal("10.00")

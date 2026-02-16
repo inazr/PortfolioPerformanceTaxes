@@ -97,6 +97,10 @@ class FifoBestand:
             Decimal("0"),
         )
 
+    def add_vorabpauschale_to_lot(self, lot_index: int, betrag: Decimal) -> None:
+        """Vorabpauschale direkt auf ein bestimmtes Lot addieren."""
+        self._lots[lot_index].vorabpauschalen_kumuliert += betrag
+
     def add_vorabpauschale(self, betrag: Decimal) -> None:
         """Verteile Vorabpauschale proportional auf alle Lots."""
         gesamt = self.gesamtstuecke()

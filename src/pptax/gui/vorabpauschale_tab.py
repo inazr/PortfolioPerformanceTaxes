@@ -21,7 +21,9 @@ from PyQt6.QtGui import QColor
 
 from pptax.parser.pp_xml_parser import PortfolioData
 from pptax.engine.vorabpauschale import berechne_vorabpauschale
+from pptax.engine.kurs_utils import build_kurse_map, find_nearest_kurs
 from pptax.engine.tax_params import get_param
+from pptax.models.portfolio import TransaktionsTyp
 from pptax.models.tax import VorabpauschaleErgebnis
 from pptax.export.csv_export import export_vorabpauschale
 from pptax.gui import _fmt
@@ -100,30 +102,20 @@ class VorabpauschaleTab(QWidget):
             return
 
         # Kurse für Jahresanfang/-ende suchen
-        kurse_map: dict[str, dict[str, Decimal]] = {}
-        for k in self.data.kurse:
-            if k.security_uuid not in kurse_map:
-                kurse_map[k.security_uuid] = {}
-            kurse_map[k.security_uuid][k.datum.isoformat()] = k.kurs
+        kurse_map = build_kurse_map(self.data.kurse)
 
         self._ergebnisse = []
         for sec in self.data.securities:
             sec_kurse = kurse_map.get(sec.uuid, {})
 
-            # Finde nächsten Kurs zum 1.1. und 31.12.
-            wert_anfang = self._find_nearest_kurs(
-                sec_kurse, date(jahr, 1, 1)
-            )
-            wert_ende = self._find_nearest_kurs(
-                sec_kurse, date(jahr, 12, 31)
-            )
+            wert_anfang = find_nearest_kurs(sec_kurse, date(jahr, 1, 1))
+            wert_ende = find_nearest_kurs(sec_kurse, date(jahr, 12, 31))
 
             if wert_anfang is None or wert_ende is None:
                 continue
 
             # Ausschüttungen im Jahr
             ausschuettungen = Decimal("0")
-            from pptax.models.portfolio import TransaktionsTyp
             for tx in self.data.transactions:
                 if (
                     tx.security_uuid == sec.uuid
@@ -145,23 +137,6 @@ class VorabpauschaleTab(QWidget):
                 continue
 
         self._update_table()
-
-    def _find_nearest_kurs(
-        self, kurse: dict[str, Decimal], target: date
-    ) -> Decimal | None:
-        """Finde den nächsten Kurs zu einem Stichtag."""
-        if not kurse:
-            return None
-        target_str = target.isoformat()
-        if target_str in kurse:
-            return kurse[target_str]
-        # Suche nächsten Kurs innerhalb von 5 Tagen
-        from datetime import timedelta
-        for delta in range(1, 6):
-            for d in [target - timedelta(days=delta), target + timedelta(days=delta)]:
-                if d.isoformat() in kurse:
-                    return kurse[d.isoformat()]
-        return None
 
     def _update_table(self):
         self.table.setRowCount(len(self._ergebnisse))

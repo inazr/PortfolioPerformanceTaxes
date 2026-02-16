@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QComboBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -21,6 +22,8 @@ from pptax.parser.pp_xml_parser import PortfolioData
 from pptax.models.portfolio import TransaktionsTyp
 from pptax.engine.fifo import FifoBestand
 from pptax.engine.freibetrag import optimiere_freibetrag
+from pptax.engine.kurs_utils import build_kurse_map
+from pptax.engine.vp_integration import apply_vorabpauschalen
 from pptax.engine.tax_params import get_param
 from pptax.models.tax import FreibetragOptimierungErgebnis
 from pptax.export.csv_export import export_freibetrag
@@ -38,11 +41,18 @@ class FreibetragTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Freibetrag-Anzeige
+        # Freibetrag-Anzeige + Jahrwahl
         info_layout = QHBoxLayout()
         self.freibetrag_label = QLabel("Freibetrag: – / – / –")
         self.freibetrag_label.setStyleSheet("font-size: 14px; font-weight: bold;")
         info_layout.addWidget(self.freibetrag_label)
+
+        info_layout.addWidget(QLabel("Steuerjahr:"))
+        self.year_combo = QComboBox()
+        current_year = date.today().year
+        for y in range(current_year, 2017, -1):
+            self.year_combo.addItem(str(y))
+        info_layout.addWidget(self.year_combo)
 
         btn_calc = QPushButton("Optimale Verkäufe berechnen")
         btn_calc.clicked.connect(self._calculate)
@@ -78,7 +88,7 @@ class FreibetragTab(QWidget):
 
     def _update_freibetrag_display(self):
         config = self.main_window.config
-        jahr = date.today().year
+        jahr = int(self.year_combo.currentText())
         try:
             spb = get_param("sparerpauschbetrag", jahr)
             gesamt = Decimal(str(spb[config.veranlagungstyp]))
@@ -97,10 +107,10 @@ class FreibetragTab(QWidget):
             return
 
         config = self.main_window.config
-        jahr = date.today().year
+        jahr = int(self.year_combo.currentText())
 
         # FIFO-Bestände aufbauen
-        positionen, aktuelle_kurse = _build_fifo_from_data(self.data)
+        positionen, aktuelle_kurse = _build_fifo_from_data(self.data, steuerjahr=jahr)
 
         sec_map = {s.uuid: s for s in self.data.securities}
 
@@ -158,8 +168,13 @@ class FreibetragTab(QWidget):
 
 def _build_fifo_from_data(
     data: PortfolioData,
+    steuerjahr: int | None = None,
 ) -> tuple[dict[str, FifoBestand], dict[str, Decimal]]:
-    """Baue FIFO-Bestände und aktuelle Kurse aus den Portfolio-Daten."""
+    """Baue FIFO-Bestände und aktuelle Kurse aus den Portfolio-Daten.
+
+    Wenn steuerjahr angegeben, werden Vorabpauschalen für alle
+    abgeschlossenen Jahre vor dem Steuerjahr auf die Lots angewendet.
+    """
     positionen: dict[str, FifoBestand] = {}
 
     # Transaktionen nach Datum sortieren
@@ -177,6 +192,12 @@ def _build_fifo_from_data(
                     )
                 except ValueError:
                     pass
+
+    # Vorabpauschalen anwenden
+    if steuerjahr is not None:
+        sec_map = {s.uuid: s for s in data.securities}
+        kurse_map = build_kurse_map(data.kurse)
+        apply_vorabpauschalen(positionen, sec_map, kurse_map, data.transactions, steuerjahr)
 
     # Aktuelle Kurse: neuester verfügbarer Kurs pro Security
     aktuelle_kurse: dict[str, Decimal] = {}

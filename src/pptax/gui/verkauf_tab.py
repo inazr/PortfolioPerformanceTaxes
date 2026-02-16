@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QComboBox,
     QLineEdit,
     QPushButton,
     QTableWidget,
@@ -47,6 +48,13 @@ class VerkaufTab(QWidget):
         input_layout.addWidget(self.netto_input)
         input_layout.addWidget(QLabel("€"))
 
+        input_layout.addWidget(QLabel("Steuerjahr:"))
+        self.year_combo = QComboBox()
+        current_year = date.today().year
+        for y in range(current_year, 2017, -1):
+            self.year_combo.addItem(str(y))
+        input_layout.addWidget(self.year_combo)
+
         btn_calc = QPushButton("Berechnen")
         btn_calc.clicked.connect(self._calculate)
         input_layout.addWidget(btn_calc)
@@ -85,9 +93,9 @@ class VerkaufTab(QWidget):
             return
 
         config = self.main_window.config
-        jahr = date.today().year
+        jahr = int(self.year_combo.currentText())
 
-        positionen, aktuelle_kurse = _build_fifo_from_data(self.data)
+        positionen, aktuelle_kurse = _build_fifo_from_data(self.data, steuerjahr=jahr)
         sec_map = {s.uuid: s for s in self.data.securities}
 
         self._plan = plane_netto_verkauf(
