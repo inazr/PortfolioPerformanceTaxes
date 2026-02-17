@@ -58,41 +58,23 @@ def _parse_date(date_str: str) -> date:
     raise ValueError(f"Unbekanntes Datumsformat: {date_str}")
 
 
-def _resolve_references(root: etree._Element) -> None:
-    """Löst XStream id/reference Attribute auf.
+def _resolve_reference(elem: etree._Element) -> etree._Element | None:
+    """Löst ein einzelnes XStream reference-Attribut auf.
 
-    XStream serialisiert Objekte einmal mit id-Attribut und referenziert
-    sie danach mit reference-Attribut. Diese Funktion ersetzt alle
-    reference-Elemente durch Kopien der originalen Elemente.
+    XStream serialisiert Objekte einmal vollständig und referenziert
+    sie danach mit relativen XPath-Pfaden im reference-Attribut.
+    Gibt das Ziel-Element zurück oder None.
     """
-    # Erstelle id -> Element Mapping
-    id_map: dict[str, etree._Element] = {}
-    for elem in root.iter():
-        elem_id = elem.get("id")
-        if elem_id is not None:
-            id_map[elem_id] = elem
-
-    # Ersetze Referenzen
-    for elem in root.iter():
-        ref = elem.get("reference")
-        if ref is not None:
-            # reference ist ein relativer XPath-ähnlicher Pfad
-            try:
-                # Versuche als relativen Pfad aufzulösen
-                target = elem.xpath(ref)
-                if target:
-                    target_elem = target[0] if isinstance(target, list) else target
-                    # Kopiere Kinder und Attribute des Ziel-Elements
-                    for child in list(elem):
-                        elem.remove(child)
-                    for child in target_elem:
-                        elem.append(child.__deepcopy__(None))
-                    for key, value in target_elem.attrib.items():
-                        if key != "id":
-                            elem.set(key, value)
-                    elem.text = target_elem.text
-            except Exception:
-                pass
+    ref = elem.get("reference")
+    if ref is None:
+        return None
+    try:
+        target = elem.xpath(ref)
+        if target:
+            return target[0] if isinstance(target, list) else target
+    except Exception:
+        pass
+    return None
 
 
 def _extract_securities(root: etree._Element) -> list[Security]:
@@ -114,11 +96,16 @@ def _extract_securities(root: etree._Element) -> list[Security]:
 def _extract_transactions(root: etree._Element) -> list[Transaction]:
     """Extrahiere Transaktionen aus Portfolio- und Kontotransaktionen."""
     transactions = []
+    seen_uuids: set[str] = set()
 
-    # Portfolio-Transaktionen (Käufe/Verkäufe)
-    for tx_elem in root.xpath(
-        "//client/portfolios/portfolio/transactions/portfolio-transaction"
-    ):
+    # Portfolio-Transaktionen (Käufe/Verkäufe) - suche überall im Dokument,
+    # da PP sie in crossEntry-Strukturen verschachteln kann
+    for tx_elem in root.xpath("//portfolio-transaction"):
+        uuid = _get_text(tx_elem, "uuid")
+        if uuid and uuid in seen_uuids:
+            continue
+        if uuid:
+            seen_uuids.add(uuid)
         tx = _parse_portfolio_transaction(tx_elem)
         if tx:
             transactions.append(tx)
@@ -127,6 +114,11 @@ def _extract_transactions(root: etree._Element) -> list[Transaction]:
     for tx_elem in root.xpath(
         "//client/accounts/account/transactions/account-transaction"
     ):
+        uuid = _get_text(tx_elem, "uuid")
+        if uuid and uuid in seen_uuids:
+            continue
+        if uuid:
+            seen_uuids.add(uuid)
         tx = _parse_account_transaction(tx_elem)
         if tx:
             transactions.append(tx)
@@ -226,7 +218,7 @@ def _extract_kurse(root: etree._Element) -> list[HistorischerKurs]:
             if t_attr and v_attr:
                 try:
                     datum = _parse_date(t_attr)
-                    kurs = _to_money(v_attr)
+                    kurs = _to_shares(v_attr)
                     kurse.append(
                         HistorischerKurs(
                             security_uuid=uuid, datum=datum, kurs=kurs
@@ -258,17 +250,11 @@ def _get_security_uuid(elem: etree._Element) -> str | None:
     sec_elem = elem.find("security")
     if sec_elem is not None:
         # Prüfe auf reference
-        ref = sec_elem.get("reference")
-        if ref is not None:
-            try:
-                target = sec_elem.xpath(ref)
-                if target:
-                    target_elem = target[0] if isinstance(target, list) else target
-                    uuid_elem = target_elem.find("uuid")
-                    if uuid_elem is not None and uuid_elem.text:
-                        return uuid_elem.text.strip()
-            except Exception:
-                pass
+        target = _resolve_reference(sec_elem)
+        if target is not None:
+            uuid_elem = target.find("uuid")
+            if uuid_elem is not None and uuid_elem.text:
+                return uuid_elem.text.strip()
         # Direkte UUID
         uuid_elem = sec_elem.find("uuid")
         if uuid_elem is not None and uuid_elem.text:
@@ -295,9 +281,6 @@ def parse_portfolio_file(filepath: str | Path) -> PortfolioData:
     else:
         tree = etree.parse(str(filepath))
         root = tree.getroot()
-
-    # Referenzen auflösen
-    _resolve_references(root)
 
     return PortfolioData(
         securities=_extract_securities(root),
