@@ -2,6 +2,7 @@
 
 import csv
 import io
+from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
@@ -100,9 +101,41 @@ def export_freibetrag(
         "Netto-Erlös",
     ]
 
-    rows = []
+    # Gruppiere nach Security für Summary-Zeilen
+    grouped: dict[str, list[VerkaufsVorschlag]] = defaultdict(list)
+    order: list[str] = []
     for v in ergebnis.verkaufsempfehlungen:
-        rows.append(_vorschlag_to_row(v, german_format))
+        if v.security_uuid not in grouped:
+            order.append(v.security_uuid)
+        grouped[v.security_uuid].append(v)
+
+    rows = []
+    for uuid in order:
+        lots = grouped[uuid]
+        if len(lots) > 1:
+            # Summary-Zeile
+            first = lots[0]
+            total_stuecke = sum(v.stuecke for v in lots)
+            avg_einstand = (
+                sum(v.einstandskurs * v.stuecke for v in lots) / total_stuecke
+                if total_stuecke > 0
+                else Decimal("0")
+            )
+            rows.append([
+                f"{first.security_name} (Gesamt)",
+                first.isin or "",
+                _format_decimal(total_stuecke, german_format),
+                "",
+                _format_decimal(avg_einstand, german_format),
+                _format_decimal(first.aktueller_kurs, german_format),
+                _format_decimal(sum(v.brutto_erloes for v in lots), german_format),
+                _format_decimal(sum(v.gewinn_brutto for v in lots), german_format),
+                _format_decimal(sum(v.gewinn_steuerpflichtig for v in lots), german_format),
+                _format_decimal(sum(v.steuer for v in lots), german_format),
+                _format_decimal(sum(v.netto_erloes for v in lots), german_format),
+            ])
+        for v in lots:
+            rows.append(_vorschlag_to_row(v, german_format))
 
     _write_csv(filepath, header, rows, german_format)
 

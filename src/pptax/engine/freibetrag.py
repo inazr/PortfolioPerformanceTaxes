@@ -1,7 +1,6 @@
 """Sparerpauschbetrag-Optimierung."""
 
-from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
-from math import ceil
+from decimal import Decimal, ROUND_HALF_UP
 
 from pptax.models.portfolio import Security
 from pptax.models.tax import FreibetragOptimierungErgebnis, VerkaufsVorschlag
@@ -32,8 +31,9 @@ def optimiere_freibetrag(
             freibetrag_verbleibend=Decimal("0"),
         )
 
-    # Sammle Positionen mit positivem Gewinn pro Stück
-    kandidaten: list[tuple[str, Decimal]] = []  # (uuid, gewinn_pro_stueck_steuerpflichtig)
+    # Sammle Lots mit positivem steuerpflichtigem Gewinn pro Stück
+    # Tuple: (uuid, lot_index, gewinn_stpfl_pro_stueck)
+    kandidaten: list[tuple[str, int, Decimal]] = []
     for uuid, fifo in positionen.items():
         if uuid not in aktuelle_kurse or fifo.gesamtstuecke() <= 0:
             continue
@@ -44,22 +44,26 @@ def optimiere_freibetrag(
         tfs_data = get_param("teilfreistellung", jahr)
         tfs = Decimal(str(tfs_data[sec.fonds_typ.value]))
 
-        # Simuliere Verkauf von 1 Stück
-        stuecke_gesamt = fifo.gesamtstuecke()
-        gewinn_brutto = fifo.gewinn_bei_verkauf(stuecke_gesamt, kurs)
-        if gewinn_brutto <= 0:
-            continue
+        for lot_idx, lot in enumerate(fifo.bestand()):
+            gewinn_pro_stueck_brutto = kurs - lot.einstandskurs
+            vp_pro_stueck = (
+                lot.vorabpauschalen_kumuliert / lot.stuecke
+                if lot.stuecke > 0
+                else Decimal("0")
+            )
+            gewinn_steuerlich = gewinn_pro_stueck_brutto - vp_pro_stueck
+            gewinn_stpfl_pro_stueck = gewinn_steuerlich * (1 - tfs)
 
-        gewinn_stpfl_pro_stueck = (gewinn_brutto / stuecke_gesamt * (1 - tfs))
-        kandidaten.append((uuid, gewinn_stpfl_pro_stueck))
+            if gewinn_stpfl_pro_stueck > 0:
+                kandidaten.append((uuid, lot_idx, gewinn_stpfl_pro_stueck))
 
     # Sortiere: höchster steuerpflichtiger Gewinn pro Stück zuerst
-    kandidaten.sort(key=lambda x: x[1], reverse=True)
+    kandidaten.sort(key=lambda x: x[2], reverse=True)
 
     empfehlungen: list[VerkaufsVorschlag] = []
     noch_frei = freibetrag_verbleibend
 
-    for uuid, gewinn_stpfl_pro_stueck in kandidaten:
+    for uuid, lot_idx, gewinn_stpfl_pro_stueck in kandidaten:
         if noch_frei <= 0:
             break
 
@@ -69,27 +73,36 @@ def optimiere_freibetrag(
         tfs_data = get_param("teilfreistellung", jahr)
         tfs = Decimal(str(tfs_data[sec.fonds_typ.value]))
 
-        # Berechne benötigte Stücke
+        lot = fifo.bestand()[lot_idx]
+
+        # Berechne benötigte Stücke aus diesem Lot
         stuecke_benoetigt = (noch_frei / gewinn_stpfl_pro_stueck).quantize(
             Decimal("0.00000001"), ROUND_HALF_UP
         )
-        stuecke_verfuegbar = fifo.gesamtstuecke()
-        stuecke = min(stuecke_benoetigt, stuecke_verfuegbar)
+        stuecke = min(stuecke_benoetigt, lot.stuecke)
 
-        # Simuliere den tatsächlichen Gewinn
-        gewinn_brutto = fifo.gewinn_bei_verkauf(stuecke, kurs)
-        gewinn_stpfl = (gewinn_brutto * (1 - tfs)).quantize(TWO_PLACES, ROUND_HALF_UP)
-
-        lots = fifo.bestand()
-        erstes_lot = lots[0] if lots else None
+        # Lot-weise Gewinnberechnung
+        gewinn_pro_stueck_brutto = kurs - lot.einstandskurs
+        vp_pro_stueck = (
+            lot.vorabpauschalen_kumuliert / lot.stuecke
+            if lot.stuecke > 0
+            else Decimal("0")
+        )
+        gewinn_steuerlich = gewinn_pro_stueck_brutto - vp_pro_stueck
+        gewinn_brutto = (stuecke * gewinn_steuerlich).quantize(
+            TWO_PLACES, ROUND_HALF_UP
+        )
+        gewinn_stpfl = (stuecke * gewinn_stpfl_pro_stueck).quantize(
+            TWO_PLACES, ROUND_HALF_UP
+        )
 
         vorschlag = VerkaufsVorschlag(
             security_uuid=uuid,
             security_name=sec.name,
             isin=sec.isin,
             stuecke=stuecke,
-            kaufdatum=erstes_lot.kaufdatum if erstes_lot else None,
-            einstandskurs=erstes_lot.einstandskurs if erstes_lot else Decimal("0"),
+            kaufdatum=lot.kaufdatum,
+            einstandskurs=lot.einstandskurs,
             aktueller_kurs=kurs,
             brutto_erloes=(stuecke * kurs).quantize(TWO_PLACES, ROUND_HALF_UP),
             gewinn_brutto=gewinn_brutto,

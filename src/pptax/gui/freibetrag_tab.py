@@ -1,5 +1,6 @@
 """Freibetrag-Optimierung Tab."""
 
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
@@ -10,13 +11,14 @@ from PyQt6.QtWidgets import (
     QLabel,
     QComboBox,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QHeaderView,
     QFileDialog,
     QMessageBox,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QColor
 
 from pptax.parser.pp_xml_parser import PortfolioData
 from pptax.models.portfolio import TransaktionsTyp
@@ -25,9 +27,14 @@ from pptax.engine.freibetrag import optimiere_freibetrag
 from pptax.engine.kurs_utils import build_kurse_map
 from pptax.engine.vp_integration import apply_vorabpauschalen
 from pptax.engine.tax_params import get_param
-from pptax.models.tax import FreibetragOptimierungErgebnis
+from pptax.models.tax import FreibetragOptimierungErgebnis, VerkaufsVorschlag
 from pptax.export.csv_export import export_freibetrag
 from pptax.gui import _fmt
+
+HEADERS = [
+    "Wertpapier", "ISIN", "Stücke", "Kaufdatum",
+    "Einstandskurs", "Aktueller Kurs", "Gewinn stpfl.", "Steuer",
+]
 
 
 class FreibetragTab(QWidget):
@@ -70,17 +77,15 @@ class FreibetragTab(QWidget):
         info_text.setStyleSheet("color: gray; margin: 5px 0;")
         layout.addWidget(info_text)
 
-        # Tabelle
-        self.table = QTableWidget()
-        self.table.setColumnCount(8)
-        self.table.setHorizontalHeaderLabels([
-            "Wertpapier", "ISIN", "Stücke", "Kaufdatum",
-            "Einstandskurs", "Aktueller Kurs", "Gewinn stpfl.", "Steuer",
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(
+        # Tree-Widget (zuklappbar)
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(len(HEADERS))
+        self.tree.setHeaderLabels(HEADERS)
+        self.tree.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
-        layout.addWidget(self.table)
+        self.tree.setRootIsDecorated(True)
+        layout.addWidget(self.tree)
 
     def update_data(self, data: PortfolioData):
         self.data = data
@@ -124,34 +129,101 @@ class FreibetragTab(QWidget):
         )
 
         self._update_freibetrag_display()
-        self._update_table()
+        self._update_tree()
 
-    def _update_table(self):
+    def _update_tree(self):
         if not self._ergebnis:
             return
 
+        self.tree.clear()
         empf = self._ergebnis.verkaufsempfehlungen
-        self.table.setRowCount(len(empf))
 
-        for i, v in enumerate(empf):
-            items = [
-                v.security_name,
-                v.isin or "",
-                _fmt.decimal(v.stuecke),
-                v.kaufdatum.strftime("%d.%m.%Y") if v.kaufdatum else "",
-                _fmt.euro(v.einstandskurs),
-                _fmt.euro(v.aktueller_kurs),
-                _fmt.euro(v.gewinn_steuerpflichtig),
-                _fmt.euro(v.steuer),
-            ]
-            for j, text in enumerate(items):
-                item = QTableWidgetItem(text)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if j >= 2:
-                    item.setTextAlignment(
-                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                    )
-                self.table.setItem(i, j, item)
+        # Gruppiere Vorschläge nach security_uuid (Reihenfolge beibehalten)
+        grouped: dict[str, list[VerkaufsVorschlag]] = defaultdict(list)
+        order: list[str] = []
+        for v in empf:
+            if v.security_uuid not in grouped:
+                order.append(v.security_uuid)
+            grouped[v.security_uuid].append(v)
+
+        bold_font = QFont()
+        bold_font.setBold(True)
+        gray_color = QColor(100, 100, 100)
+
+        for uuid in order:
+            lots = grouped[uuid]
+
+            if len(lots) > 1:
+                # Zusammenfassungszeile als Parent-Item
+                total_stuecke = sum(v.stuecke for v in lots)
+                total_gewinn_stpfl = sum(v.gewinn_steuerpflichtig for v in lots)
+                total_steuer = sum(v.steuer for v in lots)
+                avg_einstand = (
+                    sum(v.einstandskurs * v.stuecke for v in lots) / total_stuecke
+                    if total_stuecke > 0
+                    else Decimal("0")
+                )
+
+                first = lots[0]
+                parent = QTreeWidgetItem(self.tree, [
+                    first.security_name,
+                    first.isin or "",
+                    _fmt.decimal(total_stuecke),
+                    f"({len(lots)} Lots)",
+                    _fmt.euro(avg_einstand),
+                    _fmt.euro(first.aktueller_kurs),
+                    _fmt.euro(total_gewinn_stpfl),
+                    _fmt.euro(total_steuer),
+                ])
+                for col in range(len(HEADERS)):
+                    parent.setFont(col, bold_font)
+                    if col >= 2:
+                        parent.setTextAlignment(
+                            col,
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                        )
+
+                # Lot-Detail-Zeilen als Children
+                for v in lots:
+                    child = QTreeWidgetItem(parent, [
+                        f"Lot {v.kaufdatum.strftime('%d.%m.%Y')}",
+                        "",
+                        _fmt.decimal(v.stuecke),
+                        v.kaufdatum.strftime("%d.%m.%Y") if v.kaufdatum else "",
+                        _fmt.euro(v.einstandskurs),
+                        _fmt.euro(v.aktueller_kurs),
+                        _fmt.euro(v.gewinn_steuerpflichtig),
+                        _fmt.euro(v.steuer),
+                    ])
+                    for col in range(len(HEADERS)):
+                        child.setForeground(col, gray_color)
+                        if col >= 2:
+                            child.setTextAlignment(
+                                col,
+                                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                            )
+
+                # Default: zugeklappt
+                parent.setExpanded(False)
+            else:
+                # Einzelnes Lot — Top-Level ohne Children
+                v = lots[0]
+                item = QTreeWidgetItem(self.tree, [
+                    v.security_name,
+                    v.isin or "",
+                    _fmt.decimal(v.stuecke),
+                    v.kaufdatum.strftime("%d.%m.%Y") if v.kaufdatum else "",
+                    _fmt.euro(v.einstandskurs),
+                    _fmt.euro(v.aktueller_kurs),
+                    _fmt.euro(v.gewinn_steuerpflichtig),
+                    _fmt.euro(v.steuer),
+                ])
+                for col in range(len(HEADERS)):
+                    if col >= 2:
+                        item.setTextAlignment(
+                            col,
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                        )
 
     def export_csv(self):
         if not self._ergebnis:

@@ -1,5 +1,6 @@
 """Verkaufsplanung Tab."""
 
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
@@ -11,21 +12,26 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QLineEdit,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QHeaderView,
     QFileDialog,
     QMessageBox,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 
 from pptax.parser.pp_xml_parser import PortfolioData
 from pptax.engine.verkauf import plane_netto_verkauf
-from pptax.models.tax import NettoBetragPlan
+from pptax.models.tax import NettoBetragPlan, VerkaufsVorschlag
 from pptax.export.csv_export import export_verkaufsplan
 from pptax.gui import _fmt
 from pptax.gui.freibetrag_tab import _build_fifo_from_data
+
+HEADERS = [
+    "Wertpapier", "ISIN", "Stücke", "Kauf am",
+    "Einstand", "Aktuell", "Gewinn", "Steuer", "Netto",
+]
 
 
 class VerkaufTab(QWidget):
@@ -66,17 +72,15 @@ class VerkaufTab(QWidget):
         self.summary_label.setStyleSheet("font-size: 14px; font-weight: bold;")
         layout.addWidget(self.summary_label)
 
-        # Tabelle
-        self.table = QTableWidget()
-        self.table.setColumnCount(9)
-        self.table.setHorizontalHeaderLabels([
-            "Wertpapier", "ISIN", "Stücke", "Kauf am",
-            "Einstand", "Aktuell", "Gewinn", "Steuer", "Netto",
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(
+        # Tree-Widget (zuklappbar)
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(len(HEADERS))
+        self.tree.setHeaderLabels(HEADERS)
+        self.tree.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
-        layout.addWidget(self.table)
+        self.tree.setRootIsDecorated(True)
+        layout.addWidget(self.tree)
 
     def update_data(self, data: PortfolioData):
         self.data = data
@@ -124,39 +128,69 @@ class VerkaufTab(QWidget):
             f"(Ziel: {_fmt.euro(p.ziel_netto)})"
         )
 
+        self.tree.clear()
         plan = p.verkaufsplan
-        self.table.setRowCount(len(plan))
 
-        for i, v in enumerate(plan):
-            items = [
-                v.security_name,
-                v.isin or "",
-                _fmt.decimal(v.stuecke),
-                v.kaufdatum.strftime("%d.%m.%Y") if v.kaufdatum else "",
-                _fmt.euro(v.einstandskurs),
-                _fmt.euro(v.aktueller_kurs),
-                _fmt.euro(v.gewinn_brutto),
-                _fmt.euro(v.steuer),
-                _fmt.euro(v.netto_erloes),
-            ]
-            for j, text in enumerate(items):
-                item = QTableWidgetItem(text)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if j >= 2:
-                    item.setTextAlignment(
-                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                    )
-                # Negative Werte in Rot
-                if j >= 6:
-                    try:
-                        val = Decimal(
-                            text.replace(".", "").replace(",", ".").replace(" €", "").replace(" ", "")
+        # Gruppiere nach security_uuid
+        grouped: dict[str, list[VerkaufsVorschlag]] = defaultdict(list)
+        order: list[str] = []
+        for v in plan:
+            if v.security_uuid not in grouped:
+                order.append(v.security_uuid)
+            grouped[v.security_uuid].append(v)
+
+        bold_font = QFont()
+        bold_font.setBold(True)
+        gray_color = QColor(100, 100, 100)
+
+        for uuid in order:
+            lots = grouped[uuid]
+
+            if len(lots) > 1:
+                # Zusammenfassungszeile
+                total_stuecke = sum(v.stuecke for v in lots)
+                total_gewinn = sum(v.gewinn_brutto for v in lots)
+                total_steuer = sum(v.steuer for v in lots)
+                total_netto = sum(v.netto_erloes for v in lots)
+                avg_einstand = (
+                    sum(v.einstandskurs * v.stuecke for v in lots) / total_stuecke
+                    if total_stuecke > 0
+                    else Decimal("0")
+                )
+
+                first = lots[0]
+                parent = QTreeWidgetItem(self.tree, [
+                    first.security_name,
+                    first.isin or "",
+                    _fmt.decimal(total_stuecke),
+                    f"({len(lots)} Lots)",
+                    _fmt.euro(avg_einstand),
+                    _fmt.euro(first.aktueller_kurs),
+                    _fmt.euro(total_gewinn),
+                    _fmt.euro(total_steuer),
+                    _fmt.euro(total_netto),
+                ])
+                for col in range(len(HEADERS)):
+                    parent.setFont(col, bold_font)
+                    if col >= 2:
+                        parent.setTextAlignment(
+                            col,
+                            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                         )
-                        if val < 0:
-                            item.setForeground(QColor("red"))
-                    except Exception:
-                        pass
-                self.table.setItem(i, j, item)
+                _color_negative_cols(parent, range(6, len(HEADERS)))
+
+                # Lot-Details
+                for v in lots:
+                    child = _make_lot_item(parent, v)
+                    for col in range(len(HEADERS)):
+                        child.setForeground(col, gray_color)
+                    _color_negative_cols(child, range(6, len(HEADERS)))
+
+                parent.setExpanded(False)
+            else:
+                # Einzelnes Lot
+                item = _make_lot_item(self.tree, lots[0])
+                _color_negative_cols(item, range(6, len(HEADERS)))
 
     def export_csv(self):
         if not self._plan:
@@ -169,3 +203,42 @@ class VerkaufTab(QWidget):
         if filepath:
             export_verkaufsplan(self._plan, filepath)
             QMessageBox.information(self, "Export", "Export erfolgreich.")
+
+
+def _make_lot_item(parent, v: VerkaufsVorschlag) -> QTreeWidgetItem:
+    """Erstelle ein TreeWidgetItem für ein einzelnes Lot."""
+    is_child = isinstance(parent, QTreeWidgetItem)
+    name = f"Lot {v.kaufdatum.strftime('%d.%m.%Y')}" if is_child else v.security_name
+    item = QTreeWidgetItem(parent, [
+        name,
+        "" if is_child else (v.isin or ""),
+        _fmt.decimal(v.stuecke),
+        v.kaufdatum.strftime("%d.%m.%Y") if v.kaufdatum else "",
+        _fmt.euro(v.einstandskurs),
+        _fmt.euro(v.aktueller_kurs),
+        _fmt.euro(v.gewinn_brutto),
+        _fmt.euro(v.steuer),
+        _fmt.euro(v.netto_erloes),
+    ])
+    for col in range(len(HEADERS)):
+        if col >= 2:
+            item.setTextAlignment(
+                col,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            )
+    return item
+
+
+def _color_negative_cols(item: QTreeWidgetItem, cols: range) -> None:
+    """Färbe negative Werte in den angegebenen Spalten rot."""
+    red = QColor("red")
+    for col in cols:
+        text = item.text(col)
+        try:
+            val = Decimal(
+                text.replace(".", "").replace(",", ".").replace(" €", "").replace(" ", "")
+            )
+            if val < 0:
+                item.setForeground(col, red)
+        except Exception:
+            pass
