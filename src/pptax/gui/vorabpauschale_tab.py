@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QComboBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -40,15 +39,8 @@ class VorabpauschaleTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Jahr-Auswahl
+        # Berechnen-Button
         top_layout = QHBoxLayout()
-        top_layout.addWidget(QLabel("Steuerjahr:"))
-        self.year_combo = QComboBox()
-        current_year = date.today().year
-        for y in range(current_year, 2017, -1):
-            self.year_combo.addItem(str(y))
-        top_layout.addWidget(self.year_combo)
-
         btn_calc = QPushButton("Berechnen")
         btn_calc.clicked.connect(self._calculate)
         top_layout.addWidget(btn_calc)
@@ -62,14 +54,14 @@ class VorabpauschaleTab(QWidget):
 
         # Tabelle
         self.table = QTableWidget()
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
-            "Wertpapier", "ISIN", "Wert 01.01.", "Wert 31.12.",
+            "Jahr", "Wertpapier", "ISIN", "Wert 01.01.", "Wert 31.12.",
             "Basisertrag", "Vorabpauschale", "Teilfreistellung",
             "Steuerpflichtig", "Steuer",
         ])
         self.table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
+            1, QHeaderView.ResizeMode.Stretch
         )
         layout.addWidget(self.table)
 
@@ -81,77 +73,118 @@ class VorabpauschaleTab(QWidget):
     def update_data(self, data: PortfolioData):
         self.data = data
 
+    def _get_available_years(self) -> list[int]:
+        """Ermittle alle Jahre, für die Kursdaten vorhanden sind."""
+        if not self.data:
+            return []
+        years: set[int] = set()
+        for k in self.data.kurse:
+            years.add(k.datum.year)
+        return sorted(years, reverse=True)
+
     def _calculate(self):
         if not self.data:
             return
 
-        jahr = int(self.year_combo.currentText())
-
-        # Prüfe ob Basiszins negativ
-        try:
-            basiszins = get_param("basiszins_vorabpauschale", jahr)
-            if basiszins < 0:
-                self.warning_label.setText(
-                    f"Basiszins {jahr} ist negativ ({basiszins}) – "
-                    f"keine Vorabpauschale fällig."
-                )
-            else:
-                self.warning_label.setText("")
-        except ValueError:
-            self.warning_label.setText(f"Keine Daten für Jahr {jahr} verfügbar.")
-            return
-
-        # Kurse für Jahresanfang/-ende suchen
         kurse_map = build_kurse_map(self.data.kurse)
+        available_years = self._get_available_years()
+
+        # Warnungen für Jahre mit negativem Basiszins sammeln
+        negative_years: list[str] = []
 
         self._ergebnisse = []
-        for sec in self.data.securities:
-            sec_kurse = kurse_map.get(sec.uuid, {})
-
-            wert_anfang = find_nearest_kurs(sec_kurse, date(jahr, 1, 1))
-            wert_ende = find_nearest_kurs(sec_kurse, date(jahr, 12, 31))
-
-            if wert_anfang is None or wert_ende is None:
-                continue
-
-            # Ausschüttungen im Jahr
-            ausschuettungen = Decimal("0")
-            for tx in self.data.transactions:
-                if (
-                    tx.security_uuid == sec.uuid
-                    and tx.typ == TransaktionsTyp.DIVIDENDE
-                    and tx.datum.year == jahr
-                ):
-                    ausschuettungen += tx.gesamtbetrag
-
+        for jahr in available_years:
             try:
-                erg = berechne_vorabpauschale(
-                    security=sec,
-                    jahr=jahr,
-                    wert_anfang=wert_anfang,
-                    wert_ende=wert_ende,
-                    ausschuettungen=ausschuettungen,
-                )
-                self._ergebnisse.append(erg)
+                basiszins = get_param("basiszins_vorabpauschale", jahr)
             except ValueError:
                 continue
+
+            if basiszins < 0:
+                negative_years.append(f"{jahr} ({basiszins})")
+
+            for sec in self.data.securities:
+                sec_kurse = kurse_map.get(sec.uuid, {})
+
+                wert_anfang = find_nearest_kurs(sec_kurse, date(jahr, 1, 1))
+                wert_ende = find_nearest_kurs(sec_kurse, date(jahr, 12, 31))
+
+                if wert_anfang is None or wert_ende is None:
+                    continue
+
+                # Ausschüttungen im Jahr
+                ausschuettungen = Decimal("0")
+                for tx in self.data.transactions:
+                    if (
+                        tx.security_uuid == sec.uuid
+                        and tx.typ == TransaktionsTyp.DIVIDENDE
+                        and tx.datum.year == jahr
+                    ):
+                        ausschuettungen += tx.gesamtbetrag
+
+                try:
+                    erg = berechne_vorabpauschale(
+                        security=sec,
+                        jahr=jahr,
+                        wert_anfang=wert_anfang,
+                        wert_ende=wert_ende,
+                        ausschuettungen=ausschuettungen,
+                    )
+                    self._ergebnisse.append(erg)
+                except ValueError:
+                    continue
+
+        if negative_years:
+            self.warning_label.setText(
+                "Negativer Basiszins (keine VP fällig): "
+                + ", ".join(negative_years)
+            )
+        else:
+            self.warning_label.setText("")
 
         self._update_table()
 
     def _update_table(self):
-        self.table.setRowCount(len(self._ergebnisse))
-        steuer_summe = Decimal("0")
-
         sec_map = {}
         if self.data:
             sec_map = {s.uuid: s for s in self.data.securities}
 
-        for i, e in enumerate(self._ergebnisse):
+        # Sortierung: Jahr DESC, Wertpapier-Name ASC
+        def sort_key(e: VorabpauschaleErgebnis):
+            sec = sec_map.get(e.security_uuid)
+            name = sec.name if sec else e.security_uuid
+            return (-e.jahr, name.lower())
+
+        sorted_ergebnisse = sorted(self._ergebnisse, key=sort_key)
+
+        # Ergebnisse nach Jahr gruppieren für Zwischensummen
+        jahre_in_order: list[int] = []
+        for e in sorted_ergebnisse:
+            if not jahre_in_order or jahre_in_order[-1] != e.jahr:
+                jahre_in_order.append(e.jahr)
+
+        # Zähle Zeilen: Ergebnisse + Zwischensummen pro Jahr
+        row_count = len(sorted_ergebnisse) + len(jahre_in_order)
+        self.table.setRowCount(row_count)
+
+        steuer_gesamt = Decimal("0")
+        row = 0
+        current_jahr = None
+        jahr_steuer = Decimal("0")
+
+        for e in sorted_ergebnisse:
+            # Zwischensumme für vorheriges Jahr einfügen
+            if current_jahr is not None and e.jahr != current_jahr:
+                self._insert_subtotal_row(row, current_jahr, jahr_steuer)
+                row += 1
+                jahr_steuer = Decimal("0")
+
+            current_jahr = e.jahr
             sec = sec_map.get(e.security_uuid)
             name = sec.name if sec else e.security_uuid
             isin = sec.isin if sec else ""
 
             items = [
+                str(e.jahr),
                 name,
                 isin or "",
                 _fmt.euro(e.wert_jahresanfang),
@@ -165,15 +198,45 @@ class VorabpauschaleTab(QWidget):
             for j, text in enumerate(items):
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                if j >= 2:
+                if j >= 3:
                     item.setTextAlignment(
                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                     )
-                self.table.setItem(i, j, item)
+                self.table.setItem(row, j, item)
 
-            steuer_summe += e.steuer
+            jahr_steuer += e.steuer
+            steuer_gesamt += e.steuer
+            row += 1
 
-        self.sum_label.setText(f"Steuer gesamt: {_fmt.euro(steuer_summe)}")
+        # Letzte Zwischensumme
+        if current_jahr is not None:
+            self._insert_subtotal_row(row, current_jahr, jahr_steuer)
+
+        self.sum_label.setText(f"Steuer gesamt: {_fmt.euro(steuer_gesamt)}")
+
+    def _insert_subtotal_row(self, row: int, jahr: int, steuer: Decimal):
+        """Fügt eine fett formatierte Zwischensummen-Zeile ein."""
+        bg_color = QColor(240, 240, 240)
+        bold_font_items = [
+            (0, f"Summe {jahr}"),
+            (9, _fmt.euro(steuer)),
+        ]
+        for col in range(self.table.columnCount()):
+            item = QTableWidgetItem("")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            item.setBackground(bg_color)
+            self.table.setItem(row, col, item)
+
+        for col, text in bold_font_items:
+            item = self.table.item(row, col)
+            item.setText(text)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+            if col >= 3:
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
 
     def export_csv(self):
         if not self._ergebnisse:
