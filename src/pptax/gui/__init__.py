@@ -23,12 +23,27 @@ class _fmt:
         return f"{s} %"
 
     @staticmethod
-    def decimal(value) -> str:
-        """Formatiere Decimal mit deutschem Dezimalzeichen."""
-        from decimal import Decimal
+    def decimal(value, max_decimals: int = 4) -> str:
+        """Formatiere Decimal mit deutschem Dezimalzeichen.
+
+        Maximal max_decimals Nachkommastellen. Rundet auf, wenn der
+        abgeschnittene Rest weniger als 2 % des Gesamtwerts ausmacht.
+        """
+        from decimal import Decimal, ROUND_UP, ROUND_DOWN
         v = Decimal(str(value))
-        # Zeige bis zu 8 Nachkommastellen, aber entferne trailing zeros
-        s = f"{v:.8f}".rstrip("0").rstrip(".")
+        quantize_exp = Decimal(10) ** -max_decimals
+
+        truncated = v.quantize(quantize_exp, rounding=ROUND_DOWN)
+        rest = v - truncated
+
+        if rest > 0 and v != 0:
+            anteil = rest / v
+            if anteil < Decimal("0.02"):
+                v = v.quantize(quantize_exp, rounding=ROUND_UP)
+            else:
+                v = truncated
+
+        s = f"{v:.{max_decimals}f}".rstrip("0").rstrip(".")
         s = s.replace(".", ",")
         return s
 

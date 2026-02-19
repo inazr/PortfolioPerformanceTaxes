@@ -35,8 +35,8 @@ class TestIntegration:
 
         # World ETF: 100 bought, then 20 bought, then 30 sold = 90 remaining
         assert positionen["sec-etf-world-001"].gesamtstuecke() == Decimal("90")
-        # Bond ETF: 50 bought, no sales = 50
-        assert positionen["sec-bond-etf-002"].gesamtstuecke() == Decimal("50")
+        # Bond ETF: 50 bought (Depot A) + 30 bought (Depot B) = 80
+        assert positionen["sec-bond-etf-002"].gesamtstuecke() == Decimal("80")
         # Immo ETF: 200 bought, no sales = 200
         assert positionen["sec-immo-003"].gesamtstuecke() == Decimal("200")
 

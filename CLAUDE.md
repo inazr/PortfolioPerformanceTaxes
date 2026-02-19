@@ -74,3 +74,4 @@ Pipeline: **XML Parser → Data Models → Tax Engine → GUI/Export**
 - *IMPORTANT*: DO NOT ASSUME ANYTHING! Ask many clarification questions! 
 - Use context7 if needed
 - Use skills if available
+- Failure is an option. It is better to stop and ask for help then to create something with flaws.

@@ -7,6 +7,8 @@ from pptax.models.portfolio import (
     Transaction,
     HistorischerKurs,
     FifoPosition,
+    PortfolioInfo,
+    PortfolioData,
 )
 from pptax.models.tax import (
     VorabpauschaleErgebnis,

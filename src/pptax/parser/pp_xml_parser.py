@@ -6,7 +6,6 @@ Konvertiert PP Integer-Beträge zu Decimal (÷100 für Geld, ÷10^8 für Anteile
 """
 
 import zipfile
-from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -19,16 +18,9 @@ from pptax.models.portfolio import (
     TransaktionsTyp,
     HistorischerKurs,
     FondsTyp,
+    PortfolioData,
+    PortfolioInfo,
 )
-
-
-@dataclass
-class PortfolioData:
-    """Ergebnis des Parsens einer PP-XML-Datei."""
-
-    securities: list[Security] = field(default_factory=list)
-    transactions: list[Transaction] = field(default_factory=list)
-    kurse: list[HistorischerKurs] = field(default_factory=list)
 
 
 # PP speichert Geldbeträge als Centbeträge (integer ÷ 100)
@@ -93,40 +85,110 @@ def _extract_securities(root: etree._Element) -> list[Security]:
     return securities
 
 
-def _extract_transactions(root: etree._Element) -> list[Transaction]:
+def _extract_portfolios(root: etree._Element) -> list[PortfolioInfo]:
+    """Extrahiere Portfolio/Depot-Metadaten."""
+    portfolios = []
+    for ptf_elem in root.xpath("//client/portfolios/portfolio"):
+        uuid = _get_text(ptf_elem, "uuid", "")
+        name = _get_text(ptf_elem, "name", "Unbekannt")
+        if not uuid:
+            continue
+
+        # referenceAccount UUID auflösen
+        ref_acc_uuid = None
+        ref_acc_elem = ptf_elem.find("referenceAccount")
+        if ref_acc_elem is not None:
+            target = _resolve_reference(ref_acc_elem)
+            if target is not None:
+                ref_acc_uuid = _get_text(target, "uuid")
+            else:
+                ref_acc_uuid = _get_text(ref_acc_elem, "uuid")
+
+        portfolios.append(
+            PortfolioInfo(
+                uuid=uuid, name=name, reference_account_uuid=ref_acc_uuid
+            )
+        )
+    return portfolios
+
+
+def _extract_transactions(
+    root: etree._Element,
+    portfolios: list[PortfolioInfo] | None = None,
+) -> list[Transaction]:
     """Extrahiere Transaktionen aus Portfolio- und Kontotransaktionen."""
     transactions = []
     seen_uuids: set[str] = set()
+    # Halte Referenzen auf verarbeitete lxml-Elemente (verhindert Proxy-GC)
+    seen_elems: list[etree._Element] = []
 
-    # Portfolio-Transaktionen (Käufe/Verkäufe) - suche überall im Dokument,
-    # da PP sie in crossEntry-Strukturen verschachteln kann
+    # Account-UUID → Portfolio-UUID Mapping (für Dividenden)
+    account_to_portfolio: dict[str, str] = {}
+    if portfolios:
+        for ptf in portfolios:
+            if ptf.reference_account_uuid:
+                account_to_portfolio[ptf.reference_account_uuid] = ptf.uuid
+
+    # Portfolio-Transaktionen — per Portfolio iterieren für portfolio_uuid
+    for ptf_elem in root.xpath("//client/portfolios/portfolio"):
+        ptf_uuid = _get_text(ptf_elem, "uuid")
+        for tx_elem in ptf_elem.xpath(".//portfolio-transaction"):
+            uuid = _get_text(tx_elem, "uuid")
+            if uuid and uuid in seen_uuids:
+                continue
+            if uuid:
+                seen_uuids.add(uuid)
+            seen_elems.append(tx_elem)
+            tx = _parse_portfolio_transaction(tx_elem, portfolio_uuid=ptf_uuid)
+            if tx:
+                transactions.append(tx)
+
+    # crossEntry-Transaktionen außerhalb von Portfolios
     for tx_elem in root.xpath("//portfolio-transaction"):
+        if any(tx_elem is e for e in seen_elems):
+            continue
         uuid = _get_text(tx_elem, "uuid")
         if uuid and uuid in seen_uuids:
             continue
         if uuid:
             seen_uuids.add(uuid)
-        tx = _parse_portfolio_transaction(tx_elem)
+        seen_elems.append(tx_elem)
+        # DOM-Ancestry: Portfolio-UUID aus nächstem Vorfahren-Portfolio holen
+        ptf_uuid = _find_ancestor_portfolio_uuid(tx_elem)
+        tx = _parse_portfolio_transaction(tx_elem, portfolio_uuid=ptf_uuid)
         if tx:
             transactions.append(tx)
 
     # Konto-Transaktionen (Dividenden)
-    for tx_elem in root.xpath(
-        "//client/accounts/account/transactions/account-transaction"
-    ):
-        uuid = _get_text(tx_elem, "uuid")
-        if uuid and uuid in seen_uuids:
-            continue
-        if uuid:
-            seen_uuids.add(uuid)
-        tx = _parse_account_transaction(tx_elem)
-        if tx:
-            transactions.append(tx)
+    for acc_elem in root.xpath("//client/accounts/account"):
+        acc_uuid = _get_text(acc_elem, "uuid")
+        ptf_uuid = account_to_portfolio.get(acc_uuid) if acc_uuid else None
+        for tx_elem in acc_elem.xpath("transactions/account-transaction"):
+            uuid = _get_text(tx_elem, "uuid")
+            if uuid and uuid in seen_uuids:
+                continue
+            if uuid:
+                seen_uuids.add(uuid)
+            tx = _parse_account_transaction(tx_elem, portfolio_uuid=ptf_uuid)
+            if tx:
+                transactions.append(tx)
 
     return transactions
 
 
-def _parse_portfolio_transaction(elem: etree._Element) -> Transaction | None:
+def _find_ancestor_portfolio_uuid(elem: etree._Element) -> str | None:
+    """Suche in DOM-Ancestry nach einem Portfolio-Element und gib dessen UUID zurück."""
+    parent = elem.getparent()
+    while parent is not None:
+        if parent.tag == "portfolio":
+            return _get_text(parent, "uuid")
+        parent = parent.getparent()
+    return None
+
+
+def _parse_portfolio_transaction(
+    elem: etree._Element, portfolio_uuid: str | None = None
+) -> Transaction | None:
     """Parst eine Portfolio-Transaktion (Kauf/Verkauf)."""
     typ_str = _get_text(elem, "type", "")
     typ_map = {
@@ -169,10 +231,13 @@ def _parse_portfolio_transaction(elem: etree._Element) -> Transaction | None:
         gesamtbetrag=gesamtbetrag,
         gebuehren=gebuehren,
         steuern=steuern,
+        portfolio_uuid=portfolio_uuid,
     )
 
 
-def _parse_account_transaction(elem: etree._Element) -> Transaction | None:
+def _parse_account_transaction(
+    elem: etree._Element, portfolio_uuid: str | None = None
+) -> Transaction | None:
     """Parst eine Konto-Transaktion (Dividende, Zinsen)."""
     typ_str = _get_text(elem, "type", "")
     if typ_str != "DIVIDENDS":
@@ -201,6 +266,7 @@ def _parse_account_transaction(elem: etree._Element) -> Transaction | None:
         kurs=Decimal("0"),
         gesamtbetrag=gesamtbetrag,
         steuern=_to_money(taxes_str),
+        portfolio_uuid=portfolio_uuid,
     )
 
 
@@ -282,8 +348,10 @@ def parse_portfolio_file(filepath: str | Path) -> PortfolioData:
         tree = etree.parse(str(filepath))
         root = tree.getroot()
 
+    portfolios = _extract_portfolios(root)
     return PortfolioData(
         securities=_extract_securities(root),
-        transactions=_extract_transactions(root),
+        transactions=_extract_transactions(root, portfolios),
         kurse=_extract_kurse(root),
+        portfolios=portfolios,
     )

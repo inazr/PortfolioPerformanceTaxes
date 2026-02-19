@@ -6,6 +6,7 @@ from pptax.models.portfolio import Security
 from pptax.models.tax import FreibetragOptimierungErgebnis, VerkaufsVorschlag
 from pptax.engine.fifo import FifoBestand
 from pptax.engine.tax_params import get_param
+from pptax.engine.bestandsschutz import ist_bestandsgeschuetzt
 
 TWO_PLACES = Decimal("0.01")
 
@@ -45,6 +46,8 @@ def optimiere_freibetrag(
         tfs = Decimal(str(tfs_data[sec.fonds_typ.value]))
 
         for lot_idx, lot in enumerate(fifo.bestand()):
+            if ist_bestandsgeschuetzt(lot.kaufdatum, sec.is_fond):
+                continue
             gewinn_pro_stueck_brutto = kurs - lot.einstandskurs
             vp_pro_stueck = (
                 lot.vorabpauschalen_kumuliert / lot.stuecke

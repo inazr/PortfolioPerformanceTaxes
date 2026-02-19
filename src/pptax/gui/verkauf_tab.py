@@ -141,7 +141,7 @@ class VerkaufTab(QWidget):
 
         bold_font = QFont()
         bold_font.setBold(True)
-        gray_color = QColor(100, 100, 100)
+        gray_color = self.palette().placeholderText().color()
 
         for uuid in order:
             lots = grouped[uuid]
@@ -209,6 +209,8 @@ def _make_lot_item(parent, v: VerkaufsVorschlag) -> QTreeWidgetItem:
     """Erstelle ein TreeWidgetItem für ein einzelnes Lot."""
     is_child = isinstance(parent, QTreeWidgetItem)
     name = f"Lot {v.kaufdatum.strftime('%d.%m.%Y')}" if is_child else v.security_name
+    if v.bestandsgeschuetzt:
+        name += " (Bestandsschutz)"
     item = QTreeWidgetItem(parent, [
         name,
         "" if is_child else (v.isin or ""),
@@ -226,6 +228,10 @@ def _make_lot_item(parent, v: VerkaufsVorschlag) -> QTreeWidgetItem:
                 col,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             )
+    if v.bestandsgeschuetzt:
+        green = QColor("#2e7d32")
+        for col in range(len(HEADERS)):
+            item.setForeground(col, green)
     return item
 
 

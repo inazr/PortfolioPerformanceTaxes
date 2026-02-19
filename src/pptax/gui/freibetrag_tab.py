@@ -148,7 +148,7 @@ class FreibetragTab(QWidget):
 
         bold_font = QFont()
         bold_font.setBold(True)
-        gray_color = QColor(100, 100, 100)
+        gray_color = self.palette().placeholderText().color()
 
         for uuid in order:
             lots = grouped[uuid]

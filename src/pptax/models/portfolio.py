@@ -49,6 +49,16 @@ class Transaction:
     gesamtbetrag: Decimal
     gebuehren: Decimal = Decimal("0")
     steuern: Decimal = Decimal("0")
+    portfolio_uuid: str | None = None
+
+
+@dataclass
+class PortfolioInfo:
+    """Metadaten eines Depots/Portfolios."""
+
+    uuid: str
+    name: str
+    reference_account_uuid: str | None = None
 
 
 @dataclass
@@ -58,6 +68,16 @@ class HistorischerKurs:
     security_uuid: str
     datum: date
     kurs: Decimal
+
+
+@dataclass
+class PortfolioData:
+    """Ergebnis des Parsens einer PP-XML-Datei."""
+
+    securities: list[Security] = field(default_factory=list)
+    transactions: list[Transaction] = field(default_factory=list)
+    kurse: list[HistorischerKurs] = field(default_factory=list)
+    portfolios: list[PortfolioInfo] = field(default_factory=list)
 
 
 @dataclass

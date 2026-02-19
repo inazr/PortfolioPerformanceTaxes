@@ -35,7 +35,7 @@ class TestPPXMLParser:
         verkaeufe = [t for t in data.transactions if t.typ == TransaktionsTyp.VERKAUF]
         dividenden = [t for t in data.transactions if t.typ == TransaktionsTyp.DIVIDENDE]
 
-        assert len(kaeufe) >= 3  # 3 Käufe im XML
+        assert len(kaeufe) >= 4  # 4 Käufe im XML (3 Depot A + 1 Depot B)
         assert len(verkaeufe) >= 1  # 1 Verkauf
         assert len(dividenden) >= 1  # Dividenden
 
@@ -66,6 +66,56 @@ class TestPPXMLParser:
         ]
         assert len(matching) == 1
         assert matching[0].kurs == Decimal("95.00")
+
+
+class TestPortfolioExtraction:
+    def test_parse_portfolios(self):
+        """Parse Portfolio-Metadaten aus Sample-XML."""
+        data = parse_portfolio_file(SAMPLE_XML)
+        assert len(data.portfolios) == 2
+
+        names = {p.name for p in data.portfolios}
+        assert "Depot A" in names
+        assert "Depot B" in names
+
+    def test_portfolio_reference_account(self):
+        """Portfolio referenceAccount UUID wird korrekt aufgelöst."""
+        data = parse_portfolio_file(SAMPLE_XML)
+        ptf_a = next(p for p in data.portfolios if p.uuid == "ptf-001")
+        ptf_b = next(p for p in data.portfolios if p.uuid == "ptf-002")
+        assert ptf_a.reference_account_uuid == "acc-001"
+        assert ptf_b.reference_account_uuid == "acc-002"
+
+    def test_transaction_portfolio_assignment(self):
+        """Transaktionen werden ihrem Portfolio zugeordnet."""
+        data = parse_portfolio_file(SAMPLE_XML)
+
+        ptf_a_txs = [t for t in data.transactions if t.portfolio_uuid == "ptf-001"]
+        ptf_b_txs = [t for t in data.transactions if t.portfolio_uuid == "ptf-002"]
+
+        # Depot A: 4 Käufe + 1 Verkauf + 2 Dividenden = 7
+        assert len(ptf_a_txs) == 7
+        # Depot B: 1 Kauf + 1 Dividende = 2
+        assert len(ptf_b_txs) == 2
+
+    def test_dividend_account_mapping(self):
+        """Dividenden werden über Account→Portfolio Mapping zugeordnet."""
+        data = parse_portfolio_file(SAMPLE_XML)
+        dividenden = [t for t in data.transactions if t.typ == TransaktionsTyp.DIVIDENDE]
+
+        # Dividende in acc-001 → ptf-001
+        div_a = [d for d in dividenden if d.portfolio_uuid == "ptf-001"]
+        assert len(div_a) == 2
+
+        # Dividende in acc-002 → ptf-002
+        div_b = [d for d in dividenden if d.portfolio_uuid == "ptf-002"]
+        assert len(div_b) == 1
+
+    def test_no_duplicate_transactions(self):
+        """Keine doppelten Transaktionen durch per-Portfolio + globale Iteration."""
+        data = parse_portfolio_file(SAMPLE_XML)
+        # 5 portfolio-tx (Depot A) + 1 portfolio-tx (Depot B) + 3 dividenden = 9
+        assert len(data.transactions) == 9
 
 
 class TestPPXMLParserEdgeCases:

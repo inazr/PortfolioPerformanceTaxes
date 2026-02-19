@@ -82,12 +82,32 @@
         </account-transaction>
       </transactions>
     </account>
+    <account>
+      <uuid>acc-002</uuid>
+      <name>Verrechnungskonto B</name>
+      <currencyCode>EUR</currencyCode>
+      <transactions>
+        <account-transaction>
+          <date>2024-03-15T00:00</date>
+          <type>DIVIDENDS</type>
+          <amount>3000</amount>
+          <shares>500000000</shares>
+          <security>
+            <uuid>sec-bond-etf-002</uuid>
+          </security>
+          <taxes>0</taxes>
+        </account-transaction>
+      </transactions>
+    </account>
   </accounts>
 
   <portfolios>
     <portfolio>
       <uuid>ptf-001</uuid>
-      <name>Depot</name>
+      <name>Depot A</name>
+      <referenceAccount>
+        <uuid>acc-001</uuid>
+      </referenceAccount>
       <transactions>
         <!-- Kauf Vanguard All-World: 100 Stücke à 95 EUR am 15.03.2022 -->
         <portfolio-transaction>
@@ -151,6 +171,27 @@
           <taxes>0</taxes>
           <security>
             <uuid>sec-etf-world-001</uuid>
+          </security>
+        </portfolio-transaction>
+      </transactions>
+    </portfolio>
+    <portfolio>
+      <uuid>ptf-002</uuid>
+      <name>Depot B</name>
+      <referenceAccount>
+        <uuid>acc-002</uuid>
+      </referenceAccount>
+      <transactions>
+        <!-- Kauf Bond ETF: 30 Stücke à 115 EUR am 01.06.2023 in Depot B -->
+        <portfolio-transaction>
+          <date>2023-06-01T00:00</date>
+          <type>BUY</type>
+          <amount>345000</amount>
+          <shares>3000000000</shares>
+          <fees>750</fees>
+          <taxes>0</taxes>
+          <security>
+            <uuid>sec-bond-etf-002</uuid>
           </security>
         </portfolio-transaction>
       </transactions>

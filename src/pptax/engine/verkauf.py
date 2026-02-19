@@ -7,6 +7,7 @@ from pptax.models.portfolio import Security
 from pptax.models.tax import NettoBetragPlan, VerkaufsVorschlag
 from pptax.engine.fifo import FifoBestand
 from pptax.engine.tax_params import get_param, get_gesamtsteuersatz
+from pptax.engine.bestandsschutz import ist_bestandsgeschuetzt
 
 TWO_PLACES = Decimal("0.01")
 
@@ -59,13 +60,27 @@ def plane_netto_verkauf(
             if noch_benoetigtes_netto <= 0:
                 break
 
+            bestandsschutz = ist_bestandsgeschuetzt(lot.kaufdatum, sec.is_fond)
+
             gewinn_pro_stueck_brutto = kurs - lot.einstandskurs
             vp_pro_stueck = lot.vorabpauschalen_kumuliert / lot.stuecke if lot.stuecke > 0 else Decimal("0")
             gewinn_steuerlich = gewinn_pro_stueck_brutto - vp_pro_stueck
-            gewinn_stpfl_pro_stueck = (gewinn_steuerlich * (1 - tfs))
+
+            if bestandsschutz:
+                # Bestandsgeschützt: komplett steuerfrei
+                gewinn_stpfl_pro_stueck = Decimal("0")
+                steuer_pro_stueck = Decimal("0")
+            else:
+                gewinn_stpfl_pro_stueck = (gewinn_steuerlich * (1 - tfs))
+                if gewinn_stpfl_pro_stueck > 0:
+                    steuer_pro_stueck = (gewinn_stpfl_pro_stueck * steuersatz).quantize(
+                        TWO_PLACES, ROUND_HALF_UP
+                    )
+                else:
+                    steuer_pro_stueck = Decimal("0")
 
             # Steuer pro Stück berechnen unter Berücksichtigung des Freibetrags
-            if gewinn_stpfl_pro_stueck > 0 and freibetrag_verbleibend > 0:
+            if not bestandsschutz and gewinn_stpfl_pro_stueck > 0 and freibetrag_verbleibend > 0:
                 # Berechne wie viele Stücke komplett freibetragsfrei sind
                 stuecke_frei = min(
                     lot.stuecke,
@@ -77,22 +92,26 @@ def plane_netto_verkauf(
                 stuecke_frei = Decimal("0")
 
             # Berechne benötigte Stücke
-            # Netto pro Stück: bei freibetragsfreien = kurs, sonst = kurs - steuer
-            if gewinn_stpfl_pro_stueck > 0:
-                steuer_pro_stueck = (gewinn_stpfl_pro_stueck * steuersatz).quantize(
-                    TWO_PLACES, ROUND_HALF_UP
-                )
-            else:
-                steuer_pro_stueck = Decimal("0")
-
+            # Netto pro Stück: bei bestandsschutz/freibetragsfrei = kurs, sonst = kurs - steuer
             netto_pro_stueck_frei = kurs
             netto_pro_stueck_besteuert = kurs - steuer_pro_stueck
 
-            # Zuerst freibetragsfreie Stücke nutzen
+            # Zuerst bestandsgeschützte oder freibetragsfreie Stücke nutzen
             stuecke_gesamt = Decimal("0")
             lot_steuer = Decimal("0")
 
-            if stuecke_frei > 0 and noch_benoetigtes_netto > 0:
+            if bestandsschutz and noch_benoetigtes_netto > 0:
+                # Alle Stücke sind steuerfrei
+                n = min(
+                    lot.stuecke,
+                    (noch_benoetigtes_netto / kurs).quantize(
+                        Decimal("0.00000001"), ROUND_UP
+                    ),
+                )
+                stuecke_gesamt += n
+                netto = (n * kurs).quantize(TWO_PLACES, ROUND_HALF_UP)
+                noch_benoetigtes_netto -= netto
+            elif stuecke_frei > 0 and noch_benoetigtes_netto > 0:
                 n_frei = min(
                     stuecke_frei,
                     (noch_benoetigtes_netto / netto_pro_stueck_frei).quantize(
@@ -107,7 +126,7 @@ def plane_netto_verkauf(
                 freibetrag_in_verkauf_genutzt += (n_frei * gewinn_stpfl_pro_stueck).quantize(TWO_PLACES, ROUND_HALF_UP)
 
             verbleibend_im_lot = lot.stuecke - stuecke_gesamt
-            if noch_benoetigtes_netto > 0 and verbleibend_im_lot > 0:
+            if not bestandsschutz and noch_benoetigtes_netto > 0 and verbleibend_im_lot > 0:
                 if netto_pro_stueck_besteuert > 0:
                     n_besteuert = min(
                         verbleibend_im_lot,
@@ -142,6 +161,7 @@ def plane_netto_verkauf(
                     gewinn_steuerpflichtig=gewinn_stpfl,
                     steuer=lot_steuer,
                     netto_erloes=(brutto - lot_steuer).quantize(TWO_PLACES, ROUND_HALF_UP),
+                    bestandsgeschuetzt=bestandsschutz,
                 )
                 verkaufsplan.append(vorschlag)
                 brutto_gesamt += brutto

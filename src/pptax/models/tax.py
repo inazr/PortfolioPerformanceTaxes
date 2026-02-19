@@ -54,6 +54,7 @@ class VerkaufsVorschlag:
     gewinn_steuerpflichtig: Decimal
     steuer: Decimal
     netto_erloes: Decimal
+    bestandsgeschuetzt: bool = False
 
 
 @dataclass

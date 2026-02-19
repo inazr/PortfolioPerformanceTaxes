@@ -54,6 +54,7 @@ class VorabpauschaleTab(QWidget):
 
         # Tabelle
         self.table = QTableWidget()
+        self.table.setAlternatingRowColors(False)
         self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels([
             "Jahr", "Wertpapier", "ISIN", "Wert 01.01.", "Wert 31.12.",
@@ -216,7 +217,12 @@ class VorabpauschaleTab(QWidget):
 
     def _insert_subtotal_row(self, row: int, jahr: int, steuer: Decimal):
         """Fügt eine fett formatierte Zwischensummen-Zeile ein."""
-        bg_color = QColor(240, 240, 240)
+        base = self.palette().base().color()
+        # Subtile Abdunklung/Aufhellung je nach Theme-Helligkeit
+        if base.lightness() > 128:
+            bg_color = base.darker(110)
+        else:
+            bg_color = base.lighter(140)
         bold_font_items = [
             (0, f"Summe {jahr}"),
             (9, _fmt.euro(steuer)),
