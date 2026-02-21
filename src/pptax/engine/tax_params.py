@@ -1,11 +1,16 @@
 """Zentrale Lookup-Funktion für historische Steuerparameter."""
 
 import json
+import sys
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
-_DATA_FILE = Path(__file__).parent.parent / "data" / "tax_parameters.json"
+if getattr(sys, "frozen", False):
+    # Running as a PyInstaller bundle; data files are under sys._MEIPASS
+    _DATA_FILE = Path(sys._MEIPASS) / "data" / "tax_parameters.json"
+else:
+    _DATA_FILE = Path(__file__).parent.parent / "data" / "tax_parameters.json"
 
 
 @lru_cache(maxsize=1)

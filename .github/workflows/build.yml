@@ -1,0 +1,64 @@
+name: Build Executables
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: pptax-windows
+            zip_cmd: Compress-Archive -Path dist/pptax -DestinationPath pptax-windows.zip
+            zip_file: pptax-windows.zip
+          - os: macos-latest
+            artifact: pptax-macos
+            zip_cmd: zip -r pptax-macos.zip dist/pptax
+            zip_file: pptax-macos.zip
+          - os: ubuntu-latest
+            artifact: pptax-linux
+            zip_cmd: zip -r pptax-linux.zip dist/pptax
+            zip_file: pptax-linux.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Build with PyInstaller
+        run: pyinstaller pptax.spec
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ${{ matrix.zip_cmd }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: ${{ matrix.zip_cmd }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.zip_file }}
+
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.zip_file }}
