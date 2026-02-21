@@ -66,3 +66,65 @@ pptax --cli-mode --file /pfad/zur/datei.xml
 pytest tests/ -v
 pytest tests/ -v --cov=pptax
 ```
+
+## Architektur
+
+Pipeline: **XML-Parser → Datenmodelle → Steuer-Engine → GUI / Export**
+
+```
+src/pptax/
+├── parser/
+│   └── pp_xml_parser.py      PP XStream-XML / .portfolio-ZIP einlesen
+├── models/
+│   ├── portfolio.py           Security, Transaction, FifoPosition, …
+│   └── tax.py                 VorabpauschaleErgebnis, VerkaufsVorschlag, …
+├── engine/
+│   ├── fifo.py                FIFO-Lostopf je Wertpapier (§ 20 Abs. 4 EStG)
+│   ├── vorabpauschale.py      8-Regel-Berechnung (§ 18 InvStG)
+│   ├── vp_integration.py      Kumulierte VP je FIFO-Los über mehrere Jahre
+│   ├── freibetrag.py          Sparerpauschbetrag-Optimierung
+│   ├── verkauf.py             „Ich brauche X € netto"-Verkaufsplaner
+│   ├── verlustverrechnung.py  Zwei-Topf-Verlustverrechnung (allg. / Aktien)
+│   ├── bestandsschutz.py      Bestandsschutzprüfung (Altbestand vor 2009)
+│   ├── tax_params.py          Jahres­parameter aus data/tax_parameters.json
+│   └── kurs_utils.py          Nächster-Datum-Kurssuche
+├── gui/
+│   ├── main_window.py         Hauptfenster, Menü, Status­leiste
+│   ├── dashboard_tab.py       Datei laden, Konfiguration, Wertpapier­tabelle
+│   ├── vorabpauschale_tab.py  Jahres­weise VP-Berechnung
+│   ├── freibetrag_tab.py      Sparerpauschbetrag-Optimierung mit Los-Baum
+│   └── verkauf_tab.py         Netto-Verkaufsplanung mit Los-Baum
+└── export/
+    └── csv_export.py          UTF-8-BOM-CSV im deutschen Zahlenformat
+```
+
+Alle Finanzwerte verwenden `Decimal` (niemals `float`).
+Steuerparameter sind jahresversionsiert in `data/tax_parameters.json`; der letzte Eintrag für Jahr ≤ Zieljahr gilt.
+
+## Packaging & Releases
+
+Vorkompilierte Binaries für **Windows**, **macOS** und **Linux** werden automatisch per GitHub Actions mit PyInstaller gebaut.
+
+### Binary herunterladen
+
+Fertige Builds stehen unter **Releases** auf GitHub bereit.
+Einfach das passende ZIP für das Betriebssystem herunterladen, entpacken und `pptax` ausführen – keine Python-Installation notwendig.
+
+### Release erstellen (Maintainer)
+
+Ein neuer Build wird automatisch gestartet, sobald ein Tag der Form `v*` gepusht wird:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Der Workflow (`.github/workflows/build.yml`) baut auf `windows-latest`, `macos-latest` und `ubuntu-latest` parallel und hängt die ZIPs an das GitHub Release an.
+
+### Lokal mit PyInstaller bauen
+
+```bash
+pip install -e ".[dev]"
+pyinstaller pptax.spec
+# Binary liegt anschließend unter dist/pptax/
+```
